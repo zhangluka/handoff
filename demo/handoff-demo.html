@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1920, height=1080">
+<title>Handoff — Demo</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0a0a0a; overflow: hidden; font-family: -apple-system, 'SF Pro Text', 'Helvetica Neue', sans-serif; }
+  @font-face { font-family: 'SF Mono'; src: local('SF Mono'), local('SFMono-Regular'), local('Menlo'), local('monospace'); }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef } = React;
+
+// ============================================================
+// Animation Engine (inline)
+// ============================================================
+const TimeContext = React.createContext({ time: 0, duration: 18, playing: false });
+const SpriteContext = React.createContext(null);
+
+const Easing = {
+  linear: t => t,
+  easeIn: t => t * t,
+  easeOut: t => 1 - (1 - t) * (1 - t),
+  easeInOut: t => t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2,
+  expoOut: t => t === 1 ? 1 : 1 - Math.pow(2, -10 * t),
+  spring: t => {
+    const c = (2 * Math.PI) / 3;
+    return t === 0 ? 0 : t === 1 ? 1 : Math.pow(2, -10 * t) * Math.sin((t * 10 - 0.75) * c) + 1;
+  },
+};
+
+function interpolate(t, input, output, easing) {
+  const [inStart, inEnd] = input;
+  const [outStart, outEnd] = output;
+  if (t <= inStart) return outStart;
+  if (t >= inEnd) return outEnd;
+  let progress = (t - inStart) / (inEnd - inStart);
+  if (easing) progress = easing(progress);
+  return outStart + (outEnd - outStart) * progress;
+}
+
+function useTime() {
+  return React.useContext(TimeContext).time;
+}
+
+function useSprite() {
+  return React.useContext(SpriteContext) || { t: 0, elapsed: 0, duration: 0 };
+}
+
+function Sprite({ start, end, children }) {
+  const time = useTime();
+  const duration = end - start;
+  const elapsed = Math.max(0, time - start);
+  const t = Math.min(1, elapsed / duration);
+  if (time < start || time >= end) return null;
+  return (
+    <SpriteContext.Provider value={{ t, elapsed, duration }}>
+      {children}
+    </SpriteContext.Provider>
+  );
+}
+
+function Stage({ duration, children }) {
+  const [time, setTime] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const rafRef = useRef(null);
+  const lastRef = useRef(null);
+
+  useEffect(() => {
+    if (!playing) { lastRef.current = null; return; }
+    const tick = (now) => {
+      if (lastRef.current !== null) {
+        const dt = (now - lastRef.current) / 1000;
+        setTime(prev => {
+          const next = prev + dt;
+          if (next >= duration) { setPlaying(false); return duration; }
+          return next;
+        });
+      }
+      lastRef.current = now;
+      rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [playing, duration]);
+
+  const progress = time / duration;
+
+  return (
+    <TimeContext.Provider value={{ time, duration, playing }}>
+      <div style={{ position: 'fixed', inset: 0, background: '#0a0a0a' }}>
+        {/* Stage */}
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ width: 1920, height: 1080, position: 'relative', overflow: 'hidden', background: '#0a0a0a' }}>
+            {children}
+          </div>
+        </div>
+        {/* Controls */}
+        <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(10px)', padding: '12px 24px', display: 'flex', alignItems: 'center', gap: 16, zIndex: 100 }}>
+          <button onClick={() => setPlaying(!playing)} style={{ background: 'none', border: '1px solid rgba(255,255,255,0.3)', color: '#fff', padding: '6px 16px', borderRadius: 4, cursor: 'pointer', fontSize: 13 }}>
+            {playing ? 'Pause' : 'Play'}
+          </button>
+          <button onClick={() => { setTime(0); setPlaying(true); }} style={{ background: 'none', border: '1px solid rgba(255,255,255,0.3)', color: '#fff', padding: '6px 16px', borderRadius: 4, cursor: 'pointer', fontSize: 13 }}>
+            Replay
+          </button>
+          <div style={{ flex: 1, height: 3, background: 'rgba(255,255,255,0.15)', borderRadius: 2, position: 'relative' }}>
+            <div style={{ position: 'absolute', left: 0, top: 0, height: '100%', width: `${progress * 100}%`, background: '#fff', borderRadius: 2 }} />
+          </div>
+          <span style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12, fontFamily: 'monospace' }}>{time.toFixed(1)}s / {duration}s</span>
+        </div>
+      </div>
+    </TimeContext.Provider>
+  );
+}
+
+// ============================================================
+// Helper: Typewriter
+// ============================================================
+function Typewriter({ text, speed = 40, delay = 0 }) {
+  const { t, elapsed } = useSprite();
+  const [shown, setShown] = useState('');
+  useEffect(() => {
+    const effectiveElapsed = Math.max(0, elapsed - delay);
+    const chars = Math.floor(effectiveElapsed * speed);
+    setShown(text.slice(0, chars));
+  }, [elapsed, text, speed, delay]);
+  return <>{shown}<span style={{ opacity: elapsed > delay ? (Math.sin(elapsed * 8) > 0 ? 1 : 0) : 0 }}>|</span></>;
+}
+
+// ============================================================
+// Helper: FadeIn
+// ============================================================
+function FadeIn({ delay = 0, duration = 0.5, children, style = {} }) {
+  const { elapsed } = useSprite();
+  const effectiveElapsed = Math.max(0, elapsed - delay);
+  const opacity = Math.min(1, effectiveElapsed / duration);
+  return <div style={{ opacity, ...style }}>{children}</div>;
+}
+
+// ============================================================
+// Scene 1: The Pain
+// ============================================================
+function PainScene() {
+  const { t, elapsed } = useSprite();
+
+  return (
+    <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#fff' }}>
+      {/* Claude Code Window */}
+      <FadeIn delay={0} style={{ position: 'absolute', left: 120, top: 180 }}>
+        <TerminalWindow title="Claude Code" active={elapsed < 3}>
+          <TerminalLine prompt=">" text="重构认证模块，改成 JWT" color="#4ade80" elapsed={elapsed} delay={0.3} />
+          <TerminalLine prompt=" " text="✓ Modified auth/middleware.ts" color="#666" elapsed={elapsed} delay={1.0} />
+          <TerminalLine prompt=" " text="✓ Modified routes/api.ts" color="#666" elapsed={elapsed} delay={1.3} />
+          <TerminalLine prompt=" " text="✓ Modified tests/auth.test.ts" color="#666" elapsed={elapsed} delay={1.6} />
+        </TerminalWindow>
+      </FadeIn>
+
+      {/* Arrow / Switch */}
+      <FadeIn delay={2.5} style={{ position: 'absolute', left: 700, top: 320, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+        <div style={{ fontSize: 14, color: 'rgba(255,255,255,0.4)', letterSpacing: '0.1em' }}>SWITCH</div>
+        <svg width="60" height="40" viewBox="0 0 60 40">
+          <path d="M0 20 L50 20 M40 10 L50 20 L40 30" stroke="rgba(255,255,255,0.3)" fill="none" strokeWidth="2" />
+        </svg>
+      </FadeIn>
+
+      {/* Cursor Window */}
+      <FadeIn delay={3.0} style={{ position: 'absolute', right: 120, top: 180 }}>
+        <TerminalWindow title="Cursor" active={elapsed >= 3}>
+          <TerminalLine prompt="?" text="你好！请问你的项目是做什么的？" color="#f97316" elapsed={elapsed} delay={3.3} speed={30} />
+          <TerminalLine prompt=" " text="" color="#666" elapsed={elapsed} delay={4.5} />
+          <TerminalLine prompt=" " text="你用了什么技术栈？" color="#f97316" elapsed={elapsed} delay={4.8} speed={30} />
+          <TerminalLine prompt=" " text="" color="#666" elapsed={elapsed} delay={5.5} />
+          <TerminalLine prompt=" " text="认证方案是什么？改了哪些文件？" color="#f97316" elapsed={elapsed} delay={5.8} speed={30} />
+        </TerminalWindow>
+      </FadeIn>
+
+      {/* Pain Text */}
+      <FadeIn delay={6.5} style={{ position: 'absolute', bottom: 160, textAlign: 'center' }}>
+        <div style={{ fontSize: 28, fontWeight: 600, color: '#ef4444', letterSpacing: '-0.02em' }}>
+          Every switch = re-explain everything
+        </div>
+        <div style={{ fontSize: 16, color: 'rgba(255,255,255,0.35)', marginTop: 12 }}>
+          Context lost. Decisions forgotten. Progress unknown.
+        </div>
+      </FadeIn>
+    </div>
+  );
+}
+
+// ============================================================
+// Scene 2: The Solution
+// ============================================================
+function SolutionScene() {
+  const { elapsed } = useSprite();
+
+  return (
+    <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#fff' }}>
+      {/* Title */}
+      <FadeIn delay={0} style={{ position: 'absolute', top: 120, textAlign: 'center' }}>
+        <div style={{ fontSize: 18, color: 'rgba(255,255,255,0.4)', letterSpacing: '0.2em', textTransform: 'uppercase' }}>The Fix</div>
+      </FadeIn>
+
+      {/* Terminal with handoff command */}
+      <FadeIn delay={0.5} style={{ position: 'absolute', top: 200 }}>
+        <TerminalWindow title="Terminal" active width={700}>
+          <TerminalLine prompt="$" text="handoff sync" color="#4ade80" elapsed={elapsed} delay={0.8} speed={50} />
+          <TerminalLine prompt=" " text="" color="#666" elapsed={elapsed} delay={2.0} />
+          <TerminalLine prompt=" " text="Syncing context for: /project" color="rgba(255,255,255,0.5)" elapsed={elapsed} delay={2.3} speed={60} />
+          <TerminalLine prompt=" " text="" color="#666" elapsed={elapsed} delay={2.8} />
+          <TerminalLine prompt=" " text="  Saved to: ~/.handoff/project/context.md" color="rgba(255,255,255,0.5)" elapsed={elapsed} delay={3.1} speed={60} />
+          <TerminalLine prompt=" " text="  Cursor:   .cursor/rules/handoff-context.mdc" color="rgba(255,255,255,0.5)" elapsed={elapsed} delay={3.5} speed={60} />
+          <TerminalLine prompt=" " text="" color="#666" elapsed={elapsed} delay={4.0} />
+          <TerminalLine prompt=" " text="Synced 3 sessions, 8 files changed." color="#4ade80" elapsed={elapsed} delay={4.3} speed={60} />
+        </TerminalWindow>
+      </FadeIn>
+
+      {/* Data flow visualization */}
+      <FadeIn delay={5.0} style={{ position: 'absolute', bottom: 200, display: 'flex', alignItems: 'center', gap: 40 }}>
+        <FlowNode label="Claude Code" sublabel="session logs" active={elapsed > 5.5} />
+        <FlowArrow active={elapsed > 6.0} />
+        <FlowNode label="Handoff" sublabel="extract + format" active={elapsed > 6.5} accent />
+        <FlowArrow active={elapsed > 7.0} />
+        <FlowNode label="Cursor" sublabel="auto-reads rules" active={elapsed > 7.5} />
+      </FadeIn>
+
+      {/* Tagline */}
+      <FadeIn delay={8.0} style={{ position: 'absolute', bottom: 100 }}>
+        <div style={{ fontSize: 22, color: 'rgba(255,255,255,0.6)', fontWeight: 300 }}>
+          One command. Zero cost. No LLM needed.
+        </div>
+      </FadeIn>
+    </div>
+  );
+}
+
+// ============================================================
+// Scene 3: The Result
+// ============================================================
+function ResultScene() {
+  const { elapsed } = useSprite();
+
+  return (
+    <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#fff' }}>
+      {/* Cursor Window - now knows everything */}
+      <FadeIn delay={0} style={{ position: 'absolute', left: 200, top: 150 }}>
+        <TerminalWindow title="Cursor" active width={600}>
+          <TerminalLine prompt=">" text="继续上次的工作" color="#4ade80" elapsed={elapsed} delay={0.3} speed={50} />
+          <TerminalLine prompt=" " text="" color="#666" elapsed={elapsed} delay={1.2} />
+          <TerminalLine prompt=" " text="好的！我看到你之前在 Claude Code 里：" color="#a78bfa" elapsed={elapsed} delay={1.5} speed={40} />
+          <TerminalLine prompt=" " text="" color="#666" elapsed={elapsed} delay={2.2} />
+          <TerminalLine prompt=" " text="  - 重构了认证模块，改用 JWT" color="rgba(255,255,255,0.5)" elapsed={elapsed} delay={2.5} speed={40} />
+          <TerminalLine prompt=" " text="  - 修改了 middleware.ts, api.ts, auth.test.ts" color="rgba(255,255,255,0.5)" elapsed={elapsed} delay={3.0} speed={40} />
+          <TerminalLine prompt=" " text="  - 测试已通过" color="rgba(255,255,255,0.5)" elapsed={elapsed} delay={3.5} speed={40} />
+          <TerminalLine prompt=" " text="" color="#666" elapsed={elapsed} delay={4.0} />
+          <TerminalLine prompt=" " text="接下来做 token 刷新逻辑？" color="#a78bfa" elapsed={elapsed} delay={4.3} speed={40} />
+        </TerminalWindow>
+      </FadeIn>
+
+      {/* Success indicator */}
+      <FadeIn delay={5.5} style={{ position: 'absolute', right: 200, top: 250, display: 'flex', flexDirection: 'column', gap: 24 }}>
+        <CheckItem text="Context preserved" delay={5.5} elapsed={elapsed} />
+        <CheckItem text="Decisions remembered" delay={6.0} elapsed={elapsed} />
+        <CheckItem text="Files tracked" delay={6.5} elapsed={elapsed} />
+        <CheckItem text="No re-explaining" delay={7.0} elapsed={elapsed} />
+      </FadeIn>
+
+      {/* Final tagline */}
+      <FadeIn delay={8.0} style={{ position: 'absolute', bottom: 120, textAlign: 'center' }}>
+        <div style={{ fontSize: 48, fontWeight: 700, letterSpacing: '-0.03em', background: 'linear-gradient(135deg, #fff 0%, #a78bfa 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
+          Handoff
+        </div>
+        <div style={{ fontSize: 18, color: 'rgba(255,255,255,0.45)', marginTop: 12, fontWeight: 300 }}>
+          Your AI coding agents should share a brain.
+        </div>
+        <div style={{ fontSize: 14, color: 'rgba(255,255,255,0.25)', marginTop: 20, fontFamily: 'monospace' }}>
+          github.com/zhangluka/handoff
+        </div>
+      </FadeIn>
+    </div>
+  );
+}
+
+// ============================================================
+// Shared Components
+// ============================================================
+function TerminalWindow({ title, children, active, width = 500 }) {
+  return (
+    <div style={{ width, background: '#161616', borderRadius: 10, overflow: 'hidden', border: `1px solid ${active ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.06)'}`, boxShadow: active ? '0 20px 60px rgba(0,0,0,0.5)' : '0 10px 30px rgba(0,0,0,0.3)' }}>
+      <div style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 8, borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+        <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#ff5f57' }} />
+        <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#febc2e' }} />
+        <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#28c840' }} />
+        <span style={{ marginLeft: 12, fontSize: 12, color: 'rgba(255,255,255,0.35)', fontFamily: '-apple-system, sans-serif' }}>{title}</span>
+      </div>
+      <div style={{ padding: '16px 18px', fontFamily: "'SF Mono', 'Menlo', 'Consolas', monospace", fontSize: 13, lineHeight: 1.8, minHeight: 180 }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function TerminalLine({ prompt, text, color, elapsed, delay, speed = 40 }) {
+  const effectiveElapsed = Math.max(0, elapsed - delay);
+  const chars = Math.floor(effectiveElapsed * speed);
+  const shown = text.slice(0, chars);
+  const showCursor = effectiveElapsed > 0 && chars < text.length;
+
+  return (
+    <div style={{ display: 'flex', gap: 8 }}>
+      <span style={{ color: 'rgba(255,255,255,0.25)', userSelect: 'none' }}>{prompt}</span>
+      <span style={{ color }}>
+        {shown}
+        {showCursor && <span style={{ opacity: Math.sin(elapsed * 8) > 0 ? 1 : 0 }}>|</span>}
+      </span>
+    </div>
+  );
+}
+
+function FlowNode({ label, sublabel, active, accent }) {
+  return (
+    <div style={{ padding: '16px 28px', borderRadius: 8, border: `1.5px solid ${active ? (accent ? '#a78bfa' : 'rgba(255,255,255,0.2)') : 'rgba(255,255,255,0.05)'}`, background: active ? (accent ? 'rgba(167,139,250,0.1)' : 'rgba(255,255,255,0.03)') : 'transparent', transition: 'all 0.5s ease', textAlign: 'center' }}>
+      <div style={{ fontSize: 15, fontWeight: 600, color: active ? '#fff' : 'rgba(255,255,255,0.2)' }}>{label}</div>
+      <div style={{ fontSize: 11, color: active ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.1)', marginTop: 4 }}>{sublabel}</div>
+    </div>
+  );
+}
+
+function FlowArrow({ active }) {
+  return (
+    <svg width="40" height="20" viewBox="0 0 40 20">
+      <path d="M0 10 L30 10 M24 5 L30 10 L24 15" stroke={active ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.08)'} fill="none" strokeWidth="1.5" style={{ transition: 'stroke 0.5s ease' }} />
+    </svg>
+  );
+}
+
+function CheckItem({ text, delay, elapsed }) {
+  const show = elapsed > delay;
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 12, opacity: show ? 1 : 0, transform: show ? 'translateX(0)' : 'translateX(20px)', transition: 'all 0.4s ease' }}>
+      <div style={{ width: 22, height: 22, borderRadius: '50%', background: '#22c55e', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: '#000', fontWeight: 700 }}>✓</div>
+      <span style={{ fontSize: 15, color: 'rgba(255,255,255,0.7)' }}>{text}</span>
+    </div>
+  );
+}
+
+// ============================================================
+// Main App
+// ============================================================
+function App() {
+  return (
+    <Stage duration={18}>
+      {/* Scene 1: The Pain (0-7s) */}
+      <Sprite start={0} end={7}>
+        <PainScene />
+      </Sprite>
+
+      {/* Scene 2: The Solution (7-14s) */}
+      <Sprite start={7} end={14}>
+        <SolutionScene />
+      </Sprite>
+
+      {/* Scene 3: The Result (14-18s) */}
+      <Sprite start={14} end={18}>
+        <ResultScene />
+      </Sprite>
+    </Stage>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+
+<!-- Auto-play hint -->
+<script>
+  setTimeout(() => {
+    const btn = document.querySelector('button');
+    if (btn && btn.textContent === 'Play') btn.click();
+  }, 500);
+</script>
+</body>
+</html>
