@@ -2,6 +2,8 @@
 
 > 每次切换 AI 编程工具，都要重新解释一遍项目上下文？不需要了。
 
+![Handoff Demo](demo/handoff-demo.gif)
+
 [English](./README.md)
 
 ## 这是什么？

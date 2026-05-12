@@ -2,6 +2,8 @@
 
 > Stop re-explaining your project every time you switch AI coding agents.
 
+![Handoff Demo](demo/handoff-demo.gif)
+
 [中文](./README_zh.md)
 
 ## What is this?
